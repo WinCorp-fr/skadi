@@ -1,0 +1,46 @@
+[project]
+name = "skadi-scraper"
+version = "0.1.0"
+description = "Agent de scraping pour skadi (foires, marchés, salons)"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.49",
+    "beautifulsoup4>=4.12",
+    "httpx>=0.28",
+    "psycopg[binary]>=3.2",
+    "sqlalchemy[asyncio]>=2.0",
+    "redis>=5.2",
+    "python-Levenshtein>=0.26",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "dateparser>=1.2",
+    "unidecode>=1.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[project.scripts]
+foires-scraper = "src.main:cli"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

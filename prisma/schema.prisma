@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────
+
+enum TypeEvenement {
+  FOIRE_MEDIEVALE
+  MARCHE
+  FOIRE_ARTISANALE
+  SALON
+  BROCANTE
+  AUTRE
+}
+
+enum Recurrence {
+  UNIQUE
+  ANNUEL
+  MENSUEL
+  HEBDOMADAIRE
+}
+
+enum StatutPipeline {
+  DECOUVERT
+  INTERESSE
+  PROSPECTION
+  RESERVE
+  CONFIRME
+  TERMINE
+  ARCHIVE
+}
+
+enum StatutProspection {
+  BROUILLON
+  PRET
+  ENVOYE
+  REPONDU
+  SANS_REPONSE
+}
+
+enum StatutJob {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum AgentName {
+  SCRAPING
+  ANALYSIS
+  GEOCODING
+  COSTS
+  EMAIL
+}
+
+enum JobTrigger {
+  USER
+  ORCHESTRATOR
+  CRON
+}
+
+// ─── Modèles ──────────────────────────────────────────
+
+model Evenement {
+  id                    Int              @id @default(autoincrement())
+  nom                   String
+  type                  TypeEvenement    @default(AUTRE)
+  description           String?
+  ville                 String
+  departement           String           @db.VarChar(3)
+  region                String?
+  adresseComplete       String?          @map("adresse_complete")
+  latitude              Float?
+  longitude             Float?
+  dateDebut             DateTime         @map("date_debut")
+  dateFin               DateTime         @map("date_fin")
+  recurrence            Recurrence       @default(UNIQUE)
+  siteWeb               String?          @map("site_web")
+  siteOfficiel          String?          @map("site_officiel")
+  emailContact          String?          @map("email_contact")
+  telephone             String?
+  prixEmplacement       Decimal?         @map("prix_emplacement") @db.Decimal(10, 2)
+  tailleEmplacement     String?          @map("taille_emplacement")
+  nombreVisiteursEstime Int?             @map("nombre_visiteurs_estime")
+  sourceUrl             String?          @map("source_url")
+  sourceNom             String?          @map("source_nom")
+  hashDedup             String?          @unique @map("hash_dedup")
+  scrapeDate            DateTime?        @map("scrape_date")
+  statutPipeline        StatutPipeline   @default(DECOUVERT) @map("statut_pipeline")
+  scorePertinence       Int?             @map("score_pertinence")
+  tagsIa                Json?            @map("tags_ia")
+  resumeIa              String?          @map("resume_ia")
+  notes                 String?
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+
+  cout        CoutEvenement?
+  resultat    ResultatEvenement?
+  prospections Prospection[]
+
+  @@map("evenements")
+}
+
+model CoutEvenement {
+  id              Int      @id @default(autoincrement())
+  evenementId     Int      @unique @map("evenement_id")
+  distanceKm      Float?   @map("distance_km")
+  dureeTrajetMin  Int?     @map("duree_trajet_min")
+  coutCarburant   Decimal  @default(0) @map("cout_carburant") @db.Decimal(10, 2)
+  coutPeage       Decimal  @default(0) @map("cout_peage") @db.Decimal(10, 2)
+  coutEmplacement Decimal  @default(0) @map("cout_emplacement") @db.Decimal(10, 2)
+  coutHebergement Decimal  @default(0) @map("cout_hebergement") @db.Decimal(10, 2)
+  coutNourriture  Decimal  @default(0) @map("cout_nourriture") @db.Decimal(10, 2)
+  coutDivers      Decimal  @default(0) @map("cout_divers") @db.Decimal(10, 2)
+  coutTotal       Decimal  @default(0) @map("cout_total") @db.Decimal(10, 2)
+  seuilRentabilite Decimal? @map("seuil_rentabilite") @db.Decimal(10, 2)
+  calculePar      String?  @map("calcule_par")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  evenement Evenement @relation(fields: [evenementId], references: [id], onDelete: Cascade)
+
+  @@map("couts_evenements")
+}
+
+model Prospection {
+  id            Int                @id @default(autoincrement())
+  evenementId   Int                @map("evenement_id")
+  templateId    Int?               @map("template_id")
+  destinataire  String
+  sujet         String
+  corps         String
+  statut        StatutProspection  @default(BROUILLON)
+  dateEnvoi     DateTime?          @map("date_envoi")
+  reponseNotes  String?            @map("reponse_notes")
+  genereParIa   Boolean            @default(false) @map("genere_par_ia")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+
+  evenement Evenement      @relation(fields: [evenementId], references: [id], onDelete: Cascade)
+  template  EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@map("prospections")
+}
+
+model EmailTemplate {
+  id             Int      @id @default(autoincrement())
+  nom            String
+  sujetTemplate  String   @map("sujet_template")
+  corpsTemplate  String   @map("corps_template")
+  variables      Json     @default("[]")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  prospections Prospection[]
+
+  @@map("email_templates")
+}
+
+model ResultatEvenement {
+  id               Int      @id @default(autoincrement())
+  evenementId      Int      @unique @map("evenement_id")
+  chiffreAffaires  Decimal  @map("chiffre_affaires") @db.Decimal(10, 2)
+  nombreClients    Int?     @map("nombre_clients")
+  meteo            String?
+  noteSatisfaction Int?     @map("note_satisfaction")
+  commentaire      String?
+  beneficeNet      Decimal? @map("benefice_net") @db.Decimal(10, 2)
+  margePct         Decimal? @map("marge_pct") @db.Decimal(5, 2)
+  recommande       Boolean  @default(false)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  evenement Evenement @relation(fields: [evenementId], references: [id], onDelete: Cascade)
+
+  @@map("resultats_evenements")
+}
+
+model AgentJob {
+  id           Int        @id @default(autoincrement())
+  agentName    AgentName  @map("agent_name")
+  statut       StatutJob  @default(PENDING)
+  inputData    Json?      @map("input_data")
+  outputData   Json?      @map("output_data")
+  startedAt    DateTime?  @map("started_at")
+  completedAt  DateTime?  @map("completed_at")
+  errorMessage String?    @map("error_message")
+  triggeredBy  JobTrigger @default(USER) @map("triggered_by")
+  parentJobId  Int?       @map("parent_job_id")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  parentJob  AgentJob?  @relation("JobChain", fields: [parentJobId], references: [id], onDelete: SetNull)
+  childJobs  AgentJob[] @relation("JobChain")
+
+  @@map("agent_jobs")
+}
+
+model GeocodingCache {
+  id        Int      @id @default(autoincrement())
+  cacheKey  String   @unique @map("cache_key")
+  data      Json
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("geocoding_cache")
+}
+
+model Parametres {
+  id                   Int      @id @default(1)
+  adresseBase          String   @default("") @map("adresse_base")
+  latitudeBase         Float?   @map("latitude_base")
+  longitudeBase        Float?   @map("longitude_base")
+  prixCarburantLitre   Decimal  @default(1.80) @map("prix_carburant_litre") @db.Decimal(5, 3)
+  consommationL100km   Decimal  @default(8.0) @map("consommation_l_100km") @db.Decimal(5, 2)
+  perDiemNourriture    Decimal  @default(15.0) @map("per_diem_nourriture") @db.Decimal(10, 2)
+  margeCiblePct        Decimal  @default(30.0) @map("marge_cible_pct") @db.Decimal(5, 2)
+  tauxPeageParKm       Decimal  @default(0.09) @map("taux_peage_par_km") @db.Decimal(5, 3)
+  pourcentageAutoroute Decimal  @default(0.60) @map("pourcentage_autoroute") @db.Decimal(3, 2)
+  seuilHebergementKm   Int      @default(150) @map("seuil_hebergement_km")
+  coutHebergementNuit  Decimal  @default(70.0) @map("cout_hebergement_nuit") @db.Decimal(10, 2)
+  emailExpediteur      String?  @map("email_expediteur")
+  smtpHost             String?  @map("smtp_host")
+  smtpPort             Int?     @default(587) @map("smtp_port")
+  smtpUser             String?  @map("smtp_user")
+  smtpPassword         String?  @map("smtp_password")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@map("parametres")
+}
