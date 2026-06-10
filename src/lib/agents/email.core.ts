@@ -57,8 +57,9 @@ export async function runEmail(prospectionId: number) {
     text: prospection.corps,
   });
 
+  // eslint-disable-next-line no-console -- log opérationnel envoi email (PII destinataire redactée)
   console.log(
-    `[email] Email envoyé à ${prospection.destinataire} (messageId: ${info.messageId})`
+    `[email] Email envoyé (messageId: ${info.messageId})`
   );
 
   // Mettre à jour le statut de la prospection
