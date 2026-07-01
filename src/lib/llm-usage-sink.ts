@@ -47,6 +47,9 @@ const PRICING_USD: Record<string, { in: number; out: number }> = {
   "claude-opus": { in: 5, out: 25 },
   "claude-haiku-4-5-20251001": { in: 1, out: 5 },
   "claude-sonnet-4-6": { in: 3, out: 15 },
+  // Sonnet 5 (migration 2026-07-02) : prix affiché $3/$15 — prix de lancement $2/$10
+  // jusqu'au 2026-08-31 volontairement non appliqué (surestimation ~2 mois, valeur durable).
+  "claude-sonnet-5": { in: 3, out: 15 },
   "claude-opus-4-6": { in: 5, out: 25 },
   "claude-opus-4-7": { in: 5, out: 25 },
   "claude-opus-4-8": { in: 5, out: 25 },
