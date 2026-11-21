@@ -39,8 +39,11 @@ En attente : session tests UI client.
 - Seuil rentabilité = coût_total / (1 - marge_cible/100)
 - IA : catégorisation + scoring pertinence uniquement (Claude Haiku, batch de 15)
 - Emails : jamais envoyés sans validation manuelle (brouillon → prêt → envoyer)
-- Dédoublonnage scraping : hash sur normalize(nom) + ville + date_debut = doublon exact, ignoré. Puis ressemblance nom + ville (seuil 85) départagée par la date : dates éloignées (> 30 jours, `dedup_same_edition_days`) = autre édition, insérée ; marché hebdomadaire de même nom, même ville, même jour de semaine = déjà connu, ignoré ; dates proches = doute, inséré avec une note « À revoir : doublon possible de … » et détaillé au journal de la collecte. Un événement ressemblant n'est jamais écarté sans trace (correctif du 21/11/2026).
-- Fiche « À revoir » traitée : archiver le doublon plutôt que le supprimer (une fiche supprimée revient à la collecte suivante, son empreinte n'étant plus en base)
+- Dédoublonnage scraping : hash sur normalize(nom) + ville + date_debut = doublon exact, ignoré. Puis ressemblance nom + ville (seuil 85) départagée par la date : dates éloignées (> 30 jours, `dedup_same_edition_days`) = autre édition, insérée ; marché hebdomadaire de même nom, même ville, même jour de semaine = déjà connu, ignoré ; dates proches = doute, inséré « à revoir » (colonnes `doublon_possible_de_id` + `doublon_score`, ou note texte si la migration `db/migrations/20261121_fiches_a_revoir.up.sql` n'est pas appliquée) et détaillé au journal de la collecte. Un événement ressemblant n'est jamais écarté sans trace (correctif du 21/11/2026).
+- Fiche « À revoir » : pastille et filtre « À revoir uniquement » dans `/evenements`, encadré sur la fiche avec « Ce n'est pas un doublon » (efface le signal) et « C'est un doublon » (archive, l'empreinte reste en base donc la fiche ne revient pas). Supprimer une fiche signalée est refusé côté serveur. Guide : `docs/fiches-a-revoir.md`
+- Signal « à revoir » = `doublon_score IS NOT NULL` (survit à la suppression de la fiche ressemblante, `ON DELETE SET NULL` sur le lien)
+- Base sans historique Prisma (pas de `prisma/migrations/`) : migrations en SQL brut dans `db/migrations/` (`.up.sql` + `.down.sql`), appliquées par le connecteur Supabase sur feu vert, AVANT le déploiement de l'application qui lit les nouvelles colonnes
+- Tests application : `npm test` (vitest, Prisma simulé). Tests collecte : `cd scraper && python -m pytest tests`
 - ANNUEL = ponctuel dans l'exercice (pas de nextOccurrence)
 
 ## CONVENTIONS SPÉCIFIQUES

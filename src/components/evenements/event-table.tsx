@@ -124,6 +124,14 @@ export function EventTable({ evenements, sort, order, searchParams }: EventTable
                   >
                     {evt.nom}
                   </Link>
+                  {evt.doublonScore != null && (
+                    <Badge
+                      className="ml-2 border-0 bg-amber-900/60 text-xs text-amber-200"
+                      title={`Doublon possible d'une fiche existante, ressemblance ${Math.round(evt.doublonScore * 100)} %`}
+                    >
+                      À revoir
+                    </Badge>
+                  )}
                   {evt.siteWeb && (
                     <a
                       href={evt.siteWeb}

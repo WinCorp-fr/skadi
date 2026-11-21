@@ -20,12 +20,20 @@ from src.worker import _save_events_to_db
 class FakeConn:
     """Fausse connexion asyncpg : sert les événements existants, enregistre les INSERT."""
 
-    def __init__(self, existing: list[dict[str, Any]]) -> None:
+    def __init__(self, existing: list[dict[str, Any]], review_columns: bool = False) -> None:
         self._existing = existing
+        # Colonnes de revue (`doublon_possible_de_id`, `doublon_score`) présentes en base ?
+        # False = base d'avant la migration du 21/11/2026.
+        self._review_columns = review_columns
         self.inserted: list[dict[str, Any]] = []
+        self.insert_sql: list[str] = []
 
     async def fetch(self, _sql: str) -> list[dict[str, Any]]:
         return self._existing
+
+    async def fetchval(self, sql: str, *_args: Any) -> int:
+        assert "information_schema.columns" in sql, "lecture inattendue"
+        return 2 if self._review_columns else 0
 
     async def fetchrow(self, sql: str, *args: Any) -> dict[str, int]:
         match = re.search(r"INSERT INTO evenements \((.*?)\)\s*VALUES", sql, re.S)
@@ -34,6 +42,7 @@ class FakeConn:
         # Autant de paramètres passés que de marqueurs $n dans la requête (sinon zip tronque)
         assert len(args) == len(set(re.findall(r"\$\d+", sql)))
         # Les N premiers paramètres correspondent aux N premières colonnes
+        self.insert_sql.append(sql)
         self.inserted.append(dict(zip(columns, args)))
         return {"id": 1000 + len(self.inserted)}
 
@@ -139,3 +148,72 @@ async def test_doublon_exact_n_est_pas_reinsere() -> None:
 
     assert new_ids == []
     assert conn.inserted == []
+
+
+# ─── Signal « à revoir » en colonnes dédiées (migration du 21/11/2026) ──────────
+
+
+async def test_cas_douteux_ecrit_le_signal_dans_les_colonnes_dediees() -> None:
+    """Base migrée : le signal va dans ses colonnes, le champ libre `notes` reste vide."""
+    conn = FakeConn(
+        [_existing(42, "Fête Médiévale de Provins", "Provins", datetime(2026, 6, 14))],
+        review_columns=True,
+    )
+    douteux = _scraped("Fete Medievale Provins", "Provins", datetime(2026, 6, 14))
+
+    new_ids = await _save_events_to_db([douteux], conn)
+
+    assert len(new_ids) == 1
+    row = conn.inserted[0]
+    assert row["doublon_possible_de_id"] == 42
+    assert 0.85 <= row["doublon_score"] <= 1.0
+    assert row["notes"] is None
+
+
+async def test_nouvel_evenement_n_a_aucun_signal_en_base_migree() -> None:
+    """Base migrée : un événement sans ressemblance n'est pas marqué « à revoir »."""
+    conn = FakeConn(
+        [_existing(1, "Fête Médiévale de Provins", "Provins", datetime(2026, 6, 14))],
+        review_columns=True,
+    )
+
+    await _save_events_to_db([_scraped("Marché de Gien", "Gien", datetime(2026, 6, 14))], conn)
+
+    row = conn.inserted[0]
+    assert row["doublon_possible_de_id"] is None
+    assert row["doublon_score"] is None
+    assert row["notes"] is None
+
+
+async def test_base_non_migree_garde_la_note_sans_toucher_aux_colonnes() -> None:
+    """Avant la migration, la collecte ne cite pas de colonnes absentes (sinon erreur SQL)."""
+    conn = FakeConn(
+        [_existing(42, "Fête Médiévale de Provins", "Provins", datetime(2026, 6, 14))],
+        review_columns=False,
+    )
+    douteux = _scraped("Fete Medievale Provins", "Provins", datetime(2026, 6, 14))
+
+    await _save_events_to_db([douteux], conn)
+
+    row = conn.inserted[0]
+    assert "doublon_possible_de_id" not in row
+    assert "doublon_score" not in row
+    assert (row["notes"] or "").startswith("À revoir")
+
+
+async def test_lien_vers_une_fiche_disparue_pendant_la_collecte_ne_fait_pas_echouer() -> None:
+    """La fiche ressemblante peut être supprimée entre la lecture et l'insertion.
+
+    Le lien est relu dans la requête (sous-requête sur `evenements`) : fiche disparue = lien
+    vide, au lieu d'une violation de clé étrangère qui arrêterait la collecte en cours de lot.
+    """
+    conn = FakeConn(
+        [_existing(42, "Fête Médiévale de Provins", "Provins", datetime(2026, 6, 14))],
+        review_columns=True,
+    )
+
+    await _save_events_to_db(
+        [_scraped("Fete Medievale Provins", "Provins", datetime(2026, 6, 14))], conn
+    )
+
+    assert re.search(r"\(SELECT id FROM evenements WHERE id = \$\d+\)", conn.insert_sql[0])

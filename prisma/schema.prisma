@@ -96,13 +96,19 @@ model Evenement {
   tagsIa                Json?            @map("tags_ia")
   resumeIa              String?          @map("resume_ia")
   notes                 String?
+  // Signal « à revoir » posé par la collecte (db/migrations/20261121_fiches_a_revoir.up.sql)
+  doublonPossibleDeId   Int?             @map("doublon_possible_de_id")
+  doublonScore          Float?           @map("doublon_score")
   createdAt             DateTime         @default(now()) @map("created_at")
   updatedAt             DateTime         @updatedAt @map("updated_at")
 
+  doublonPossibleDe Evenement?  @relation("DoublonPossible", fields: [doublonPossibleDeId], references: [id], onDelete: SetNull)
+  doublonsPossibles Evenement[] @relation("DoublonPossible")
   cout        CoutEvenement?
   resultat    ResultatEvenement?
   prospections Prospection[]
 
+  @@index([doublonScore])
   @@map("evenements")
 }
 

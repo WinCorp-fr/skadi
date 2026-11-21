@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import Link from "next/link";
-import { listEvenements } from "@/lib/actions/evenements";
+import { countARevoir, listEvenements } from "@/lib/actions/evenements";
 import { EventTable } from "@/components/evenements/event-table";
 import { EventFilters } from "@/components/evenements/event-filters";
 import { AnalyzeButton } from "@/components/evenements/analyze-button";
@@ -17,6 +17,7 @@ interface PageProps {
     statut?: string;
     score?: string;
     dist?: string;
+    revoir?: string;
     vue?: string;
     sort?: string;
     order?: string;
@@ -29,6 +30,7 @@ export default async function EvenementsPage({ searchParams }: PageProps) {
   let total = 0;
   let page = 1;
   let totalPages = 1;
+  let aRevoir = 0;
 
   const vue = searchParams.vue as "recurring" | "annuel" | "unique" | undefined;
 
@@ -38,6 +40,7 @@ export default async function EvenementsPage({ searchParams }: PageProps) {
       scoreMin: searchParams.score ? parseInt(searchParams.score) : undefined,
       distanceMax: searchParams.dist ? parseInt(searchParams.dist) : undefined,
       recurrenceFilter: vue || undefined,
+      aRevoir: searchParams.revoir === "1",
       type: searchParams.type as TypeEvenement | undefined,
       statutPipeline: searchParams.statut as StatutPipeline | undefined,
       sort: searchParams.sort as "score" | "distance" | "date" | undefined,
@@ -65,6 +68,7 @@ export default async function EvenementsPage({ searchParams }: PageProps) {
     total = result.total;
     page = result.page;
     totalPages = result.totalPages;
+    aRevoir = await countARevoir();
   } catch (error) {
     console.error("[evenements] Erreur chargement :", error);
   }
@@ -77,6 +81,14 @@ export default async function EvenementsPage({ searchParams }: PageProps) {
           <p className="text-sm text-zinc-400">
             {total} événement{total !== 1 ? "s" : ""} référencé
             {total !== 1 ? "s" : ""}
+            {aRevoir > 0 && searchParams.revoir !== "1" && (
+              <>
+                {" · "}
+                <Link href="/evenements?revoir=1" className="text-amber-400 hover:underline">
+                  {aRevoir} à revoir (doublon possible)
+                </Link>
+              </>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -147,7 +159,7 @@ export default async function EvenementsPage({ searchParams }: PageProps) {
           <div className="flex gap-2">
             {page > 1 && (
               <Link
-                href={`/evenements?page=${page - 1}${searchParams.search ? `&search=${searchParams.search}` : ""}${searchParams.type ? `&type=${searchParams.type}` : ""}${searchParams.statut ? `&statut=${searchParams.statut}` : ""}${searchParams.score ? `&score=${searchParams.score}` : ""}${searchParams.dist ? `&dist=${searchParams.dist}` : ""}${searchParams.vue ? `&vue=${searchParams.vue}` : ""}`}
+                href={`/evenements?page=${page - 1}${searchParams.search ? `&search=${searchParams.search}` : ""}${searchParams.type ? `&type=${searchParams.type}` : ""}${searchParams.statut ? `&statut=${searchParams.statut}` : ""}${searchParams.score ? `&score=${searchParams.score}` : ""}${searchParams.dist ? `&dist=${searchParams.dist}` : ""}${searchParams.vue ? `&vue=${searchParams.vue}` : ""}${searchParams.revoir ? `&revoir=${searchParams.revoir}` : ""}`}
               >
                 <Button variant="outline" size="sm">
                   Précédent
@@ -156,7 +168,7 @@ export default async function EvenementsPage({ searchParams }: PageProps) {
             )}
             {page < totalPages && (
               <Link
-                href={`/evenements?page=${page + 1}${searchParams.search ? `&search=${searchParams.search}` : ""}${searchParams.type ? `&type=${searchParams.type}` : ""}${searchParams.statut ? `&statut=${searchParams.statut}` : ""}${searchParams.score ? `&score=${searchParams.score}` : ""}${searchParams.dist ? `&dist=${searchParams.dist}` : ""}${searchParams.vue ? `&vue=${searchParams.vue}` : ""}`}
+                href={`/evenements?page=${page + 1}${searchParams.search ? `&search=${searchParams.search}` : ""}${searchParams.type ? `&type=${searchParams.type}` : ""}${searchParams.statut ? `&statut=${searchParams.statut}` : ""}${searchParams.score ? `&score=${searchParams.score}` : ""}${searchParams.dist ? `&dist=${searchParams.dist}` : ""}${searchParams.vue ? `&vue=${searchParams.vue}` : ""}${searchParams.revoir ? `&revoir=${searchParams.revoir}` : ""}`}
               >
                 <Button variant="outline" size="sm">
                   Suivant

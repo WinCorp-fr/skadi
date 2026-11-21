@@ -24,7 +24,8 @@ export function EventRowMenu({ evenementId, evenementNom }: EventRowMenuProps) {
     setOpen(false);
     if (!confirm(`Supprimer définitivement "${evenementNom}" ? Cette action est irréversible.`)) return;
     startTransition(async () => {
-      await deleteEvenement(evenementId);
+      const result = await deleteEvenement(evenementId);
+      if (!result.ok) alert(result.error);
     });
   }
 
