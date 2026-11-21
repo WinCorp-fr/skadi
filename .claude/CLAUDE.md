@@ -39,7 +39,8 @@ En attente : session tests UI client.
 - Seuil rentabilité = coût_total / (1 - marge_cible/100)
 - IA : catégorisation + scoring pertinence uniquement (Claude Haiku, batch de 15)
 - Emails : jamais envoyés sans validation manuelle (brouillon → prêt → envoyer)
-- Dédoublonnage scraping : hash sur normalize(nom) + ville + date_debut
+- Dédoublonnage scraping : hash sur normalize(nom) + ville + date_debut = doublon exact, ignoré. Puis ressemblance nom + ville (seuil 85) départagée par la date : dates éloignées (> 30 jours, `dedup_same_edition_days`) = autre édition, insérée ; marché hebdomadaire de même nom, même ville, même jour de semaine = déjà connu, ignoré ; dates proches = doute, inséré avec une note « À revoir : doublon possible de … » et détaillé au journal de la collecte. Un événement ressemblant n'est jamais écarté sans trace (correctif du 21/11/2026).
+- Fiche « À revoir » traitée : archiver le doublon plutôt que le supprimer (une fiche supprimée revient à la collecte suivante, son empreinte n'étant plus en base)
 - ANNUEL = ponctuel dans l'exercice (pas de nextOccurrence)
 
 ## CONVENTIONS SPÉCIFIQUES

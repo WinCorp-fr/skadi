@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # Dédoublonnage : seuil fuzzy Levenshtein (0-100)
     dedup_fuzzy_threshold: int = 85
 
+    # Dédoublonnage : deux événements ressemblants dont les débuts sont séparés d'au plus
+    # N jours sont peut-être la même édition (à revoir) ; au-delà, c'est une autre édition.
+    # Mesure du 21/11/2026 sur la base : entre deux éditions d'une même foire, l'écart
+    # observé va de 238 à 1 827 jours, aucun sous 30 jours.
+    dedup_same_edition_days: int = 30
+
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
