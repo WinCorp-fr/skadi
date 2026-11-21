@@ -17,7 +17,7 @@ import redis.asyncio as aioredis
 
 from .config import settings
 from .database import get_connection
-from .dedup import ScrapedEvent, TypeEvenement, deduplicate
+from .dedup import ExistingEvent, FuzzyCase, ScrapedEvent, TypeEvenement, deduplicate
 from .scrapers.fetes_medievales import FetesMedievalesScraper
 from .scrapers.jours_de_marche import JoursDeSmarcheScraper
 from .scrapers.eterritoire import EterritoireScraper
@@ -32,73 +32,130 @@ SCRAPERS = {
 }
 
 
+def _review_note(case: FuzzyCase) -> str:
+    """Note posée sur un événement « à revoir » : dit à quelle fiche il ressemble."""
+    match = case.match
+    fiche = f", fiche n° {match.id}" if match.id is not None else ""
+    return (
+        f"À revoir : doublon possible de « {match.nom} » "
+        f"({match.ville}, {match.date_debut:%d/%m/%Y}){fiche}, "
+        f"ressemblance {round(case.score * 100)} %. "
+        f"Signalé à la collecte du {datetime.now():%d/%m/%Y}."
+    )
+
+
+async def _insert_event(conn: object, event: ScrapedEvent, notes: str | None) -> int | None:
+    """Insère un événement (statut DECOUVERT) et retourne son ID."""
+    row = await conn.fetchrow(  # type: ignore[attr-defined]
+        """INSERT INTO evenements (
+            nom, type, description, ville, departement, region,
+            adresse_complete, date_debut, date_fin, recurrence,
+            site_web, email_contact, telephone,
+            prix_emplacement, taille_emplacement, nombre_visiteurs_estime,
+            source_url, source_nom, hash_dedup, scrape_date, notes,
+            statut_pipeline, created_at, updated_at
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10,
+            $11, $12, $13,
+            $14, $15, $16,
+            $17, $18, $19, $20, $21,
+            'DECOUVERT', NOW(), NOW()
+        ) RETURNING id""",
+        event.nom,
+        TypeEvenement.validate(event.type_evenement),
+        event.description or None,
+        event.ville,
+        event.departement,
+        event.region or None,
+        event.adresse_complete or None,
+        event.date_debut,
+        event.date_fin,
+        event.recurrence,
+        event.site_web or None,
+        event.email_contact or None,
+        event.telephone or None,
+        event.prix_emplacement,
+        event.taille_emplacement or None,
+        event.nombre_visiteurs_estime,
+        event.source_url or None,
+        event.source_nom or None,
+        event.hash_dedup,
+        datetime.now(),
+        notes,
+    )
+    return row["id"] if row else None
+
+
 async def _save_events_to_db(events: list[ScrapedEvent], conn: object | None = None) -> list[int]:
-    """Sauvegarde les événements dédoublonnés en base et retourne les IDs créés."""
+    """Sauvegarde les événements dédoublonnés en base et retourne les IDs créés.
+
+    Sont insérés : les nouveaux événements et les cas « à revoir » (ressemblance avec un
+    événement existant de date proche), ces derniers avec une note qui nomme la fiche
+    ressemblante. Seuls les doublons certains ne sont pas écrits.
+    """
     import asyncpg
     close_conn = False
     if conn is None:
         conn = await get_connection()
         close_conn = True
     try:
-        # Récupérer les hashes et noms/villes existants pour le dédoublonnage
+        # Récupérer les événements existants pour le dédoublonnage
         rows = await conn.fetch(
-            "SELECT hash_dedup, nom, ville FROM evenements"
+            "SELECT id, hash_dedup, nom, ville, date_debut, recurrence::text AS recurrence"
+            " FROM evenements"
         )
         existing_hashes = {r["hash_dedup"] for r in rows if r["hash_dedup"]}
-        existing_events = [(r["hash_dedup"] or "", r["nom"], r["ville"]) for r in rows]
+        existing_events = [
+            ExistingEvent(
+                hash_dedup=r["hash_dedup"] or "",
+                nom=r["nom"],
+                ville=r["ville"],
+                date_debut=r["date_debut"],
+                recurrence=r["recurrence"],
+                id=r["id"],
+            )
+            for r in rows
+        ]
 
         # Dédoublonner
         dedup_result = deduplicate(events, existing_hashes, existing_events)
 
         logger.info(
-            "Dédoublonnage : %d à insérer, %d doublons exacts, %d à revoir (fuzzy)",
+            "Dédoublonnage : %d à insérer, %d doublons exacts, "
+            "%d marchés récurrents déjà connus, %d à revoir (à insérer avec une note)",
             len(dedup_result.to_insert),
             len(dedup_result.exact_duplicates),
+            len(dedup_result.known_recurring),
             len(dedup_result.fuzzy_review),
         )
 
-        # Insérer les nouveaux événements
         new_ids: list[int] = []
+
+        # Insérer les nouveaux événements
         for event in dedup_result.to_insert:
-            row = await conn.fetchrow(
-                """INSERT INTO evenements (
-                    nom, type, description, ville, departement, region,
-                    adresse_complete, date_debut, date_fin, recurrence,
-                    site_web, email_contact, telephone,
-                    prix_emplacement, taille_emplacement, nombre_visiteurs_estime,
-                    source_url, source_nom, hash_dedup, scrape_date,
-                    statut_pipeline, created_at, updated_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6,
-                    $7, $8, $9, $10,
-                    $11, $12, $13,
-                    $14, $15, $16,
-                    $17, $18, $19, $20,
-                    'DECOUVERT', NOW(), NOW()
-                ) RETURNING id""",
-                event.nom,
-                TypeEvenement.validate(event.type_evenement),
-                event.description or None,
-                event.ville,
-                event.departement,
-                event.region or None,
-                event.adresse_complete or None,
-                event.date_debut,
-                event.date_fin,
-                event.recurrence,
-                event.site_web or None,
-                event.email_contact or None,
-                event.telephone or None,
-                event.prix_emplacement,
-                event.taille_emplacement or None,
-                event.nombre_visiteurs_estime,
-                event.source_url or None,
-                event.source_nom or None,
-                event.hash_dedup,
-                datetime.now(),
+            new_id = await _insert_event(conn, event, None)
+            if new_id is not None:
+                new_ids.append(new_id)
+
+        # Insérer les cas douteux avec leur note : un doute se montre, il ne s'écarte pas
+        for case in dedup_result.fuzzy_review:
+            new_id = await _insert_event(conn, case.event, _review_note(case))
+            logger.warning(
+                "À revoir : « %s » (%s, %s) ressemble à « %s » (%s, %s, fiche n° %s), "
+                "ressemblance %d %%. Inséré avec une note (fiche n° %s).",
+                case.event.nom,
+                case.event.ville,
+                case.event.date_debut.strftime("%d/%m/%Y"),
+                case.match.nom,
+                case.match.ville,
+                case.match.date_debut.strftime("%d/%m/%Y"),
+                case.match.id,
+                round(case.score * 100),
+                new_id,
             )
-            if row:
-                new_ids.append(row["id"])
+            if new_id is not None:
+                new_ids.append(new_id)
 
         return new_ids
     finally:
