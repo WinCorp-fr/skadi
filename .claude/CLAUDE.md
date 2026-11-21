@@ -63,6 +63,7 @@ En attente : session tests UI client.
 - **ERR-F06** — Variable système DATABASE_URL override le .env Python du scraper
 - **ERR-F07** — asyncpg + pooler transaction : DuplicatePreparedStatement → `statement_cache_size=0`
 - **ERR-F08** — Playwright corrompt la stack réseau Windows → ouvrir connexion DB AVANT de lancer Playwright
+- **ERR-F09** — Client Prisma créé au chargement du module : `next build` plante (`Cannot read properties of undefined (reading 'replace')`) quand `DATABASE_URL` manque, cas des aperçus Vercel (variable en Production seulement). Le client se crée au premier accès (`getPrisma()` + mandataire `prisma`) : ne jamais remettre de création au chargement du module.
 
 ## Spec-Driven Development (SDD)
 

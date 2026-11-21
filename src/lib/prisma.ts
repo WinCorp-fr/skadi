@@ -39,8 +39,14 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-function createPrismaClient() {
-  const url = process.env.DATABASE_URL!;
+function createPrismaClient(): PrismaClient {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL absente : impossible de créer le client Prisma. " +
+        "Définir la variable dans l'environnement (Vercel : Production et Preview)."
+    );
+  }
   const isProduction = process.env.NODE_ENV === "production";
 
   const pool = new Pool({
@@ -53,6 +59,31 @@ function createPrismaClient() {
   return new PrismaClient({ adapter });
 }
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+/**
+ * Retourne le client Prisma, créé au premier appel puis réutilisé.
+ *
+ * La création est différée : `next build` charge chaque route pendant la
+ * collecte des pages sans jamais interroger la base. Créer le client au
+ * chargement du module faisait échouer le build dès que DATABASE_URL
+ * manquait (aperçus Vercel, diagnostic du 21/11/2026).
+ */
+export function getPrisma(): PrismaClient {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createPrismaClient();
+  }
+  return globalForPrisma.prisma;
+}
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+/**
+ * Client Prisma partagé, même interface qu'avant.
+ *
+ * Mandataire (Proxy) : chaque accès (`prisma.evenement`, `prisma.$transaction`)
+ * est transmis au vrai client, créé au premier accès seulement.
+ */
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getPrisma();
+    const value: unknown = Reflect.get(client, prop, client);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
