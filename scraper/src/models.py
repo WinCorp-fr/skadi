@@ -7,7 +7,18 @@ Le schéma PostgreSQL est "foires" (configuré via search_path dans database.py)
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -64,6 +75,14 @@ class Evenement(Base):
     tags_ia: Mapped[dict | None] = mapped_column(JSON, name="tags_ia", nullable=True)
     resume_ia: Mapped[str | None] = mapped_column(String, name="resume_ia", nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Signal « à revoir » (db/migrations/20261121_fiches_a_revoir.up.sql)
+    doublon_possible_de_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("evenements.id", ondelete="SET NULL"),
+        name="doublon_possible_de_id", nullable=True,
+    )
+    doublon_score: Mapped[float | None] = mapped_column(
+        Float, name="doublon_score", nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, name="created_at", server_default=func.now()
     )

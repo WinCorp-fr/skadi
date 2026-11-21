@@ -8,6 +8,56 @@ import {
 } from "@/lib/validations/evenement";
 import type { StatutPipeline, TypeEvenement } from "@/generated/prisma/client";
 
+// ─── Fiches « à revoir » (signal posé par la collecte) ──
+
+/** Résultat d'une action que l'interface doit pouvoir refuser avec un message lisible. */
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+// Signal « à revoir » : la collecte a trouvé une fiche ressemblante de date proche.
+// Le score porte le signal (il survit si la fiche ressemblante est supprimée).
+const A_REVOIR = { doublonScore: { not: null } };
+
+const SUPPRESSION_REFUSEE =
+  "fiche signalée comme doublon possible : la supprimer la ferait revenir à la prochaine " +
+  "collecte. Ouvrez-la et choisissez « C'est un doublon » (elle sera archivée) ou " +
+  "« Ce n'est pas un doublon ».";
+
+function revalidateEvenement(id: number) {
+  revalidatePath("/evenements");
+  revalidatePath(`/evenements/${id}`);
+  revalidatePath("/archives");
+  revalidatePath("/pipeline");
+  revalidatePath("/");
+}
+
+/** Nombre de fiches à revoir encore actives (hors archives). */
+export async function countARevoir() {
+  return prisma.evenement.count({
+    where: { ...A_REVOIR, statutPipeline: { not: "ARCHIVE" as const } },
+  });
+}
+
+/** « Ce n'est pas un doublon » : efface le signal, la fiche reste telle quelle. */
+export async function ecarterSignalDoublon(id: number) {
+  await prisma.evenement.update({
+    where: { id },
+    data: { doublonPossibleDeId: null, doublonScore: null },
+  });
+  revalidateEvenement(id);
+}
+
+/**
+ * « C'est un doublon » : archive la fiche au lieu de la supprimer. Son empreinte reste en
+ * base, la collecte suivante ne la recrée donc pas. Le signal est gardé pour la trace.
+ */
+export async function confirmerDoublon(id: number) {
+  await prisma.evenement.update({
+    where: { id },
+    data: { statutPipeline: "ARCHIVE" },
+  });
+  revalidateEvenement(id);
+}
+
 // ─── Lister les événements avec filtres ───────────────
 
 type SortField = "score" | "distance" | "date";
@@ -20,6 +70,7 @@ interface ListFilters {
   scoreMin?: number;
   distanceMax?: number; // km max depuis l'adresse de base
   recurrenceFilter?: "recurring" | "annuel" | "unique"; // récurrents / annuels / ponctuels
+  aRevoir?: boolean; // fiches signalées par la collecte comme doublon possible
   sort?: SortField;
   order?: SortOrder;
   page?: number;
@@ -27,7 +78,7 @@ interface ListFilters {
 }
 
 export async function listEvenements(filters: ListFilters = {}) {
-  const { type, statutPipeline, search, scoreMin, distanceMax, recurrenceFilter, sort, order = "desc", page = 1, perPage = 20 } = filters;
+  const { type, statutPipeline, search, scoreMin, distanceMax, recurrenceFilter, aRevoir, sort, order = "desc", page = 1, perPage = 20 } = filters;
 
   const where = {
     // Exclure les archivés par défaut (sauf si filtre explicite)
@@ -35,6 +86,7 @@ export async function listEvenements(filters: ListFilters = {}) {
       ? { statutPipeline }
       : { statutPipeline: { not: "ARCHIVE" as const } }),
     ...(type && { type }),
+    ...(aRevoir && A_REVOIR),
     ...(scoreMin && { scorePertinence: { gte: scoreMin } }),
     ...(recurrenceFilter === "recurring" && {
       recurrence: { in: ["HEBDOMADAIRE" as const, "MENSUEL" as const] },
@@ -117,6 +169,9 @@ export async function getEvenement(id: number) {
       cout: true,
       resultat: true,
       prospections: { include: { template: true }, orderBy: { createdAt: "desc" } },
+      doublonPossibleDe: {
+        select: { id: true, nom: true, ville: true, dateDebut: true, statutPipeline: true },
+      },
     },
   });
 }
@@ -219,21 +274,44 @@ export async function archiveEvenement(id: number) {
   revalidatePath("/");
 }
 
-export async function deleteEvenement(id: number) {
+export async function deleteEvenement(id: number): Promise<ActionResult> {
+  const fiche = await prisma.evenement.findUnique({
+    where: { id },
+    select: { doublonScore: true },
+  });
+  if (fiche?.doublonScore != null) {
+    return { ok: false, error: `Suppression refusée, ${SUPPRESSION_REFUSEE}` };
+  }
+
   await prisma.evenement.delete({ where: { id } });
 
   revalidatePath("/evenements");
   revalidatePath("/pipeline");
   revalidatePath("/");
+  return { ok: true };
 }
 
-export async function deleteEvenements(ids: number[]) {
-  if (ids.length === 0) return;
+export async function deleteEvenements(ids: number[]): Promise<ActionResult> {
+  if (ids.length === 0) return { ok: true };
+  const signalees = await prisma.evenement.count({
+    where: { id: { in: ids }, ...A_REVOIR },
+  });
+  if (signalees > 0) {
+    return {
+      ok: false,
+      error:
+        `Suppression refusée, rien n'a été supprimé : ${signalees} fiche(s) de la sélection ` +
+        "sont signalées comme doublon possible ou confirmé. Les supprimer les ferait revenir " +
+        "à la prochaine collecte : retirez-les de la sélection.",
+    };
+  }
+
   await prisma.evenement.deleteMany({ where: { id: { in: ids } } });
 
   revalidatePath("/archives");
   revalidatePath("/evenements");
   revalidatePath("/");
+  return { ok: true };
 }
 
 // ─── Statistiques pour le dashboard ───────────────────

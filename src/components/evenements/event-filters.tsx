@@ -95,6 +95,16 @@ export function EventFilters() {
         <option value="150">≤ 150 km (3h AR)</option>
         <option value="250">≤ 250 km (5h AR)</option>
       </select>
+
+      <label className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 text-sm">
+        <input
+          type="checkbox"
+          checked={searchParams.get("revoir") === "1"}
+          onChange={(e) => updateFilter("revoir", e.target.checked ? "1" : "")}
+          className="accent-amber-500"
+        />
+        À revoir uniquement
+      </label>
     </div>
   );
 }

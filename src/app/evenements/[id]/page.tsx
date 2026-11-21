@@ -25,6 +25,7 @@ import {
 } from "@/lib/validations/evenement";
 import ResultatForm from "@/components/rapports/resultat-form";
 import { SiteOfficielEditor } from "@/components/evenements/site-officiel-editor";
+import { DoublonReview } from "@/components/evenements/doublon-review";
 
 interface PageProps {
   params: { id: string };
@@ -98,6 +99,24 @@ export default async function EvenementDetailPage({ params }: PageProps) {
           </div>
         </div>
       </div>
+
+      {evt.doublonScore != null && (
+        <DoublonReview
+          evenementId={evt.id}
+          score={evt.doublonScore}
+          archivee={evt.statutPipeline === "ARCHIVE"}
+          ressemblante={
+            evt.doublonPossibleDe
+              ? {
+                  id: evt.doublonPossibleDe.id,
+                  nom: evt.doublonPossibleDe.nom,
+                  ville: evt.doublonPossibleDe.ville,
+                  dateDebut: evt.doublonPossibleDe.dateDebut.toISOString(),
+                }
+              : null
+          }
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Infos principales */}

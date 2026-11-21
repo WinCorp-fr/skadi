@@ -44,24 +44,47 @@ def _review_note(case: FuzzyCase) -> str:
     )
 
 
-async def _insert_event(conn: object, event: ScrapedEvent, notes: str | None) -> int | None:
-    """Insère un événement (statut DECOUVERT) et retourne son ID."""
-    row = await conn.fetchrow(  # type: ignore[attr-defined]
-        """INSERT INTO evenements (
-            nom, type, description, ville, departement, region,
-            adresse_complete, date_debut, date_fin, recurrence,
-            site_web, email_contact, telephone,
-            prix_emplacement, taille_emplacement, nombre_visiteurs_estime,
-            source_url, source_nom, hash_dedup, scrape_date, notes,
-            statut_pipeline, created_at, updated_at
-        ) VALUES (
-            $1, $2, $3, $4, $5, $6,
-            $7, $8, $9, $10,
-            $11, $12, $13,
-            $14, $15, $16,
-            $17, $18, $19, $20, $21,
-            'DECOUVERT', NOW(), NOW()
-        ) RETURNING id""",
+# Colonnes du signal « à revoir » (migration `db/migrations/20261121_fiches_a_revoir.up.sql`).
+REVIEW_COLUMNS = ("doublon_possible_de_id", "doublon_score")
+
+_INSERT_COLUMNS = (
+    "nom", "type", "description", "ville", "departement", "region",
+    "adresse_complete", "date_debut", "date_fin", "recurrence",
+    "site_web", "email_contact", "telephone",
+    "prix_emplacement", "taille_emplacement", "nombre_visiteurs_estime",
+    "source_url", "source_nom", "hash_dedup", "scrape_date", "notes",
+)
+
+
+async def _has_review_columns(conn: object) -> bool:
+    """Dit si la base porte les colonnes du signal « à revoir ».
+
+    Tant que la migration n'est pas appliquée, la collecte retombe sur la note texte :
+    citer une colonne absente ferait échouer chaque insertion.
+    """
+    count = await conn.fetchval(  # type: ignore[attr-defined]
+        "SELECT count(*) FROM information_schema.columns"
+        " WHERE table_schema = current_schema() AND table_name = 'evenements'"
+        " AND column_name = ANY($1::text[])",
+        list(REVIEW_COLUMNS),
+    )
+    return count == len(REVIEW_COLUMNS)
+
+
+async def _insert_event(
+    conn: object,
+    event: ScrapedEvent,
+    notes: str | None,
+    review: FuzzyCase | None = None,
+    review_columns: bool = False,
+) -> int | None:
+    """Insère un événement (statut DECOUVERT) et retourne son ID.
+
+    Si `review_columns` est vrai, les colonnes du signal « à revoir » sont écrites
+    (vides pour un événement sans ressemblance, remplies d'après `review` sinon).
+    """
+    columns = list(_INSERT_COLUMNS)
+    values: list[object] = [
         event.nom,
         TypeEvenement.validate(event.type_evenement),
         event.description or None,
@@ -83,6 +106,22 @@ async def _insert_event(conn: object, event: ScrapedEvent, notes: str | None) ->
         event.hash_dedup,
         datetime.now(),
         notes,
+    ]
+    if review_columns:
+        columns.extend(REVIEW_COLUMNS)
+        values.extend(
+            [review.match.id, review.score] if review is not None else [None, None]
+        )
+    placeholders = [f"${i}" for i in range(1, len(values) + 1)]
+    if review_columns:
+        # Lien relu dans la requête : si la fiche ressemblante a été supprimée depuis la
+        # lecture, le lien reste vide (le score garde le signal) au lieu de violer la clé.
+        i = columns.index("doublon_possible_de_id")
+        placeholders[i] = f"(SELECT id FROM evenements WHERE id = {placeholders[i]})"
+    row = await conn.fetchrow(  # type: ignore[attr-defined]
+        f"INSERT INTO evenements ({', '.join(columns)}, statut_pipeline, created_at, updated_at)"
+        f" VALUES ({', '.join(placeholders)}, 'DECOUVERT', NOW(), NOW()) RETURNING id",
+        *values,
     )
     return row["id"] if row else None
 
@@ -91,8 +130,9 @@ async def _save_events_to_db(events: list[ScrapedEvent], conn: object | None = N
     """Sauvegarde les événements dédoublonnés en base et retourne les IDs créés.
 
     Sont insérés : les nouveaux événements et les cas « à revoir » (ressemblance avec un
-    événement existant de date proche), ces derniers avec une note qui nomme la fiche
-    ressemblante. Seuls les doublons certains ne sont pas écrits.
+    événement existant de date proche), ces derniers marqués par les colonnes
+    `doublon_possible_de_id` et `doublon_score`, ou, sur une base non migrée, par une note
+    qui nomme la fiche ressemblante. Seuls les doublons certains ne sont pas écrits.
     """
     import asyncpg
     close_conn = False
@@ -131,19 +171,33 @@ async def _save_events_to_db(events: list[ScrapedEvent], conn: object | None = N
         )
 
         new_ids: list[int] = []
+        review_columns = await _has_review_columns(conn)
+        if not review_columns:
+            logger.warning(
+                "Colonnes du signal « à revoir » absentes : migration non appliquée,"
+                " les cas douteux sont signalés par une note texte."
+            )
 
         # Insérer les nouveaux événements
         for event in dedup_result.to_insert:
-            new_id = await _insert_event(conn, event, None)
+            new_id = await _insert_event(conn, event, None, review_columns=review_columns)
             if new_id is not None:
                 new_ids.append(new_id)
 
         # Insérer les cas douteux avec leur note : un doute se montre, il ne s'écarte pas
         for case in dedup_result.fuzzy_review:
-            new_id = await _insert_event(conn, case.event, _review_note(case))
+            # Base migrée : le signal va dans ses colonnes, le champ libre `notes` reste à
+            # l'utilisateur. Sinon, repli sur la note texte (comportement d'avant migration).
+            new_id = await _insert_event(
+                conn,
+                case.event,
+                None if review_columns else _review_note(case),
+                review=case,
+                review_columns=review_columns,
+            )
             logger.warning(
                 "À revoir : « %s » (%s, %s) ressemble à « %s » (%s, %s, fiche n° %s), "
-                "ressemblance %d %%. Inséré avec une note (fiche n° %s).",
+                "ressemblance %d %%. Inséré « à revoir » (fiche n° %s).",
                 case.event.nom,
                 case.event.ville,
                 case.event.date_debut.strftime("%d/%m/%Y"),

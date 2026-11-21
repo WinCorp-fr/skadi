@@ -17,6 +17,8 @@ interface ArchiveEvent {
   departement: string;
   dateDebut: Date;
   scorePertinence: number | null;
+  /** Signal doublon posé par la collecte : la fiche ne doit pas être supprimée. */
+  doublonScore: number | null;
   resultat: { chiffreAffaires: unknown; noteSatisfaction: number | null } | null;
 }
 
@@ -28,11 +30,15 @@ export function ArchivesTable({ evenements }: ArchivesTableProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [isPending, startTransition] = useTransition();
 
+  // Les fiches signalées doublon ne sont pas sélectionnables : supprimées, elles
+  // reviendraient à la prochaine collecte (le serveur refuse aussi).
+  const supprimables = evenements.filter((e) => e.doublonScore == null);
+
   function toggleAll() {
-    if (selected.size === evenements.length) {
+    if (selected.size === supprimables.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(evenements.map((e) => e.id)));
+      setSelected(new Set(supprimables.map((e) => e.id)));
     }
   }
 
@@ -48,7 +54,11 @@ export function ArchivesTable({ evenements }: ArchivesTableProps) {
     if (!confirm(`Supprimer définitivement ${selected.size} événement(s) ? Cette action est irréversible.`)) return;
     const ids = Array.from(selected);
     startTransition(async () => {
-      await deleteEvenements(ids);
+      const result = await deleteEvenements(ids);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
       setSelected(new Set());
     });
   }
@@ -83,7 +93,7 @@ export function ArchivesTable({ evenements }: ArchivesTableProps) {
               <th className="px-4 py-3 font-medium w-8">
                 <input
                   type="checkbox"
-                  checked={selected.size === evenements.length && evenements.length > 0}
+                  checked={selected.size === supprimables.length && supprimables.length > 0}
                   onChange={toggleAll}
                   className="accent-amber-500"
                 />
@@ -115,6 +125,12 @@ export function ArchivesTable({ evenements }: ArchivesTableProps) {
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggleOne(evt.id)}
+                      disabled={evt.doublonScore != null}
+                      title={
+                        evt.doublonScore != null
+                          ? "Doublon : à garder en archive, sinon la collecte le recréerait"
+                          : undefined
+                      }
                       className="accent-amber-500"
                     />
                   </td>
@@ -125,6 +141,11 @@ export function ArchivesTable({ evenements }: ArchivesTableProps) {
                     >
                       {evt.nom}
                     </Link>
+                    {evt.doublonScore != null && (
+                      <Badge className="ml-2 border-0 bg-zinc-800 text-xs text-amber-300">
+                        Doublon
+                      </Badge>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     <Badge variant="outline" className="text-xs">
